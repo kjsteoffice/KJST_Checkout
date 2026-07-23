@@ -551,6 +551,17 @@ function renderGate(){
     $('home-ehr').style.color = '#E2E8F0';
   }
 
+  // --- ลงชื่อไปแล้ววันนี้ (ข้อมูลจากชีต ไม่ใช่หน่วยความจำเบราว์เซอร์) ---
+  if(g.checked_out){
+    $('home-status').textContent = '✓ ลงแล้ว '+g.checkout_time;
+    $('home-status').style.color = '#6EE7B7';
+    setStartEnabled(false);
+    $('btn-start-note').textContent = 'วันนี้ท่านลงชื่อกลับเรียบร้อยแล้ว';
+    showGateBox('info','✅','ลงชื่อกลับแล้ววันนี้',
+      'เวลา '+g.checkout_time+' น. · เลขอ้างอิง '+(g.checkout_ref||'-'));
+    return;
+  }
+
   // --- ด่าน 1: e-HR ระบุว่าลา/ไปราชการ -> ไม่ต้องลงชื่อ ---
   if(!g.need_checkout){
     setStartEnabled(false);
@@ -879,12 +890,16 @@ function confirmSave(){
       $('success-ref').textContent = res.ref_id || '—';
       $('success-sub').innerHTML = todayThai()+' · '+nowTimeStr()+' น.<br>บันทึกรูปเข้า Drive และข้อมูลเข้าชีตแล้ว';
       $('home-status').textContent = '✓ ลงแล้ว '+nowTimeStr();
+      loadGate();   // ดึงสถานะจริงจากเซิร์ฟเวอร์
       $('home-status').style.color = '#6EE7B7';
       show('s-success');
     } else {
       err.textContent = 'บันทึกไม่สำเร็จ: ' + ((res&&res.error)||'ไม่ทราบสาเหตุ'); err.style.display='block';
       // เซิร์ฟเวอร์ปฏิเสธเพราะยังไม่ถึงเวลา หรือ e-HR ระบุว่าลา/ไปราชการ
-      if(res && res.gate){ stopCamera(); STATE.photo=null; loadGate(); show('s-home'); }
+      if(res && res.gate){
+        stopCamera(); STATE.photo=null; loadGate(); show('s-home');
+        if(res.gate.already) beep(440,0.15);
+      }
     }
   })
   .catch(function(e){
