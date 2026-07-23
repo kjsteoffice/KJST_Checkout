@@ -290,7 +290,8 @@ var STATE = {
   photo: null,     // dataURL
   gate: null,      // ผลตรวจจาก e-HR + เวลาที่อนุญาต (จาก action=ehr_today)
   skewMs: 0,       // ส่วนต่างเวลา เครื่อง -> เซิร์ฟเวอร์ (กันการตั้งเวลาเครื่องเอง)
-  gateTimer: null  // ตัวจับเวลานับถอยหลัง
+  gateTimer: null, // ตัวจับเวลานับถอยหลัง
+  gateLoading: false // กำลังเรียก API อยู่ (กันเรียกซ้อน)
 };
 var stream = null;
 
@@ -425,6 +426,7 @@ function fillHome(u){
    เพื่อให้ครูไม่ต้องเดา และไม่เสียเวลาเดินไปถ่ายรูปโดยเปล่าประโยชน์      */
 function loadGate(){
   var dbg = function(m){ try{ console.log('[GATE] '+m); }catch(_){} };
+  if(STATE.gateLoading){ dbg('กำลังโหลดอยู่แล้ว ข้าม'); return; }   // กันเรียกซ้อน
 
   // แสดงสาเหตุบนหน้าจอเสมอ ไม่ปล่อยให้ค้างที่ 'กำลังตรวจสอบ…'
   var u = STATE.session && STATE.session.user;
@@ -434,6 +436,7 @@ function loadGate(){
   var url = (CFG.APPS_SCRIPT_URL||'').trim();
   if(!url){ dbg('ไม่ได้ตั้งค่า APPS_SCRIPT_URL'); setGateUnknown('ยังไม่ได้ตั้งค่า URL'); return; }
 
+  STATE.gateLoading = true;
   setGateLoading();
   var qs = url + (url.indexOf('?')>=0?'&':'?') + 'action=ehr_today'
          + '&teacher_id=' + encodeURIComponent(u.teacher_id);
@@ -442,7 +445,7 @@ function loadGate(){
   // ตัดจบเองถ้าเกิน 15 วินาที กันค้างถาวร
   var done = false;
   var timer = setTimeout(function(){
-    if(done) return; done = true;
+    if(done) return; done = true; STATE.gateLoading=false;
     dbg('หมดเวลา 15 วินาที');
     setGateUnknown('หมดเวลาเชื่อมต่อ');
   }, 15000);
@@ -453,7 +456,7 @@ function loadGate(){
       return r.text();                       // อ่านเป็นข้อความก่อน เผื่อไม่ใช่ JSON
     })
     .then(function(txt){
-      if(done) return; done = true; clearTimeout(timer);
+      if(done) return; done = true; clearTimeout(timer); STATE.gateLoading=false;
       var res;
       try { res = JSON.parse(txt); }
       catch(e){
@@ -472,7 +475,7 @@ function loadGate(){
       renderGate();
     })
     .catch(function(err){
-      if(done) return; done = true; clearTimeout(timer);
+      if(done) return; done = true; clearTimeout(timer); STATE.gateLoading=false;
       dbg('fetch ล้มเหลว: '+err);
       setGateUnknown('เชื่อมต่อไม่ได้');
     });
@@ -557,17 +560,20 @@ function renderGate(){
     return;
   }
 
-  // --- ด่าน 2: ยังไม่ถึงเวลาที่อนุญาต ---
+  // --- ด่าน 2: เวลาที่อนุญาต ---
   var limit = allowMinutes(g.allow_time);
-  if(limit===null){ setStartEnabled(true); $('gate-box').style.display='none'; return; }
+  if(limit===null){ openCheckout(); return; }
 
+  // ให้เซิร์ฟเวอร์เป็นผู้ตัดสินเป็นหลัก (can_checkout) เผื่อไว้ด้วยการเทียบเวลาเอง
+  var cur0 = serverMinutes();
+  if(g.can_checkout === true || cur0 >= limit){ openCheckout(); return; }
+
+  // ยังไม่ถึงเวลา -> นับถอยหลัง
   function tick(){
-    var now = serverNow();
-    var cur = now.getHours()*60 + now.getMinutes() + now.getSeconds()/60;
+    var cur = serverMinutes();
     if(cur >= limit){
-      // ถึงเวลาแล้ว — ถามเซิร์ฟเวอร์ซ้ำ ไม่ปล่อยผ่านเอง
-      clearInterval(STATE.gateTimer); STATE.gateTimer=null;
-      loadGate();
+      if(STATE.gateTimer){ clearInterval(STATE.gateTimer); STATE.gateTimer=null; }
+      loadGate();                       // ถึงเวลาแล้วถามเซิร์ฟเวอร์ซ้ำ ไม่ปล่อยผ่านเอง
       return;
     }
     setStartEnabled(false);
@@ -580,16 +586,21 @@ function renderGate(){
     $('gate-countdown').textContent = (hh?pad(hh)+':':'')+pad(mm)+':'+pad(ss);
   }
   tick();
-  if(!STATE.gateTimer) STATE.gateTimer = setInterval(tick, 1000);
+  STATE.gateTimer = setInterval(tick, 1000);
+}
 
-  // ถึงเวลาแล้ว
-  var now0 = serverNow();
-  if(now0.getHours()*60+now0.getMinutes() >= limit){
-    if(STATE.gateTimer){ clearInterval(STATE.gateTimer); STATE.gateTimer=null; }
-    setStartEnabled(true);
-    $('btn-start-note').textContent = 'ต้องอยู่ในโรงเรียน + ถ่ายรูปสดยืนยันตัวตน';
-    $('gate-box').style.display='none';
-  }
+// เปิดให้ลงชื่อกลับได้
+function openCheckout(){
+  if(STATE.gateTimer){ clearInterval(STATE.gateTimer); STATE.gateTimer=null; }
+  setStartEnabled(true);
+  $('btn-start-note').textContent = 'ต้องอยู่ในโรงเรียน + ถ่ายรูปสดยืนยันตัวตน';
+  $('gate-box').style.display='none';
+}
+
+// เวลาปัจจุบันเป็นนาที (รวมเศษวินาที) ตามนาฬิกาเซิร์ฟเวอร์
+function serverMinutes(){
+  var n = serverNow();
+  return n.getHours()*60 + n.getMinutes() + n.getSeconds()/60;
 }
 
 // ====== GPS จริง (ไม่มี fallback) ======
@@ -893,7 +904,7 @@ document.querySelectorAll('.back-camera').forEach(function(b){
   b.addEventListener('click', function(){ STATE.photo=null; startCamera(); });
 });
 function logout(){ stopCamera(); STATE.session=null; STATE.gps=null; STATE.photo=null;
-  STATE.gate=null; STATE.skewMs=0;
+  STATE.gate=null; STATE.skewMs=0; STATE.gateLoading=false;
   if(STATE.gateTimer){ clearInterval(STATE.gateTimer); STATE.gateTimer=null; }
   $('in-pass').value=''; show('s-login'); }
 $('btn-logout-home').addEventListener('click', logout);
