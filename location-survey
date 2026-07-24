@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>บันทึกพิกัดตำแหน่ง</title>
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;padding:16px;background:#f4f6f8;color:#1a2027}
+  h1{font-size:20px;margin:0 0 12px}
+  .card{background:#fff;border-radius:10px;padding:14px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+  .coord{font-family:ui-monospace,monospace;font-size:15px;line-height:1.8}
+  .coord b{display:inline-block;min-width:90px;color:#555;font-weight:500}
+  input[type=text]{width:100%;box-sizing:border-box;padding:10px;font-size:15px;border:1px solid #ccd;border-radius:6px;margin-top:8px}
+  button{padding:10px 14px;font-size:15px;border:0;border-radius:6px;cursor:pointer;margin:6px 6px 0 0;color:#fff}
+  .b-get{background:#0b7285}.b-save{background:#2b8a3e}.b-cancel{background:#868e96}.b-del{background:#c92a2a}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{border-bottom:1px solid #e5e8eb;padding:6px 4px;text-align:left}
+  th{background:#eef1f4}
+  .acc{font-size:13px;color:#666}
+  .msg{font-size:13px;color:#c92a2a;margin-top:6px}
+</style>
+</head>
+<body>
+
+<h1>📍 บันทึกพิกัดตำแหน่ง</h1>
+
+<div class="card">
+  <button class="b-get" onclick="getLoc()">อ่านค่าพิกัด</button>
+  <div class="coord" id="out">ยังไม่มีข้อมูล</div>
+  <div class="msg" id="msg"></div>
+  <input type="text" id="name" placeholder="ชื่อตำแหน่ง เช่น อาคาร 1 / ห้องปฏิบัติการฟิสิกส์">
+  <div>
+    <button class="b-save" id="btnSave" onclick="saveLoc()" disabled>บันทึก</button>
+    <button class="b-cancel" onclick="cancelLoc()">ยกเลิกไม่บันทึก</button>
+  </div>
+</div>
+
+<div class="card">
+  <b>รายการที่บันทึกไว้ (<span id="cnt">0</span>)</b>
+  <table id="tbl">
+    <thead><tr><th>ชื่อ</th><th>ละติจูด</th><th>ลองจิจูด</th><th>±ม.</th><th>เวลา</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <button class="b-del" onclick="delAll()">ลบทั้งหมด</button>
+  <button class="b-cancel" onclick="exportCSV()">ส่งออก CSV</button>
+</div>
+
+<script>
+const KEY='geo_points_v1';
+let cur=null, watchId=null;
+
+function load(){ try{return JSON.parse(localStorage.getItem(KEY))||[]}catch(e){return []} }
+function store(a){ localStorage.setItem(KEY,JSON.stringify(a)); render(); }
+
+function getLoc(){
+  if(!navigator.geolocation){ msg('อุปกรณ์ไม่รองรับ Geolocation'); return; }
+  msg('กำลังอ่านค่า... (กรุณาอยู่กลางแจ้งเพื่อความแม่นยำ)');
+  if(watchId!==null) navigator.geolocation.clearWatch(watchId);
+  watchId=navigator.geolocation.watchPosition(p=>{
+    const c=p.coords;
+    cur={lat:c.latitude,lon:c.longitude,acc:c.accuracy,alt:c.altitude,time:new Date().toLocaleString('th-TH')};
+    document.getElementById('out').innerHTML=
+      `<b>ละติจูด</b> ${c.latitude.toFixed(7)}<br>`+
+      `<b>ลองจิจูด</b> ${c.longitude.toFixed(7)}<br>`+
+      `<b>ความแม่นยำ</b> <span class="acc">± ${c.accuracy.toFixed(1)} ม.</span><br>`+
+      `<b>ความสูง</b> ${c.altitude!=null?c.altitude.toFixed(1)+' ม.':'-'}<br>`+
+      `<b>เวลา</b> ${cur.time}`;
+    document.getElementById('btnSave').disabled=false;
+    msg(c.accuracy>20?'ค่ายังไม่นิ่ง รอสักครู่ให้ ± ลดลง':'');
+  },e=>{ msg('ผิดพลาด: '+e.message); },
+  {enableHighAccuracy:true,timeout:20000,maximumAge:0});
+}
+
+function stopWatch(){ if(watchId!==null){navigator.geolocation.clearWatch(watchId); watchId=null;} }
+
+function saveLoc(){
+  if(!cur) return;
+  const n=document.getElementById('name').value.trim();
+  if(!n){ msg('กรุณาพิมพ์ชื่อตำแหน่ง'); return; }
+  const a=load(); a.push({name:n,...cur}); store(a);
+  cancelLoc(); msg('');
+}
+
+function cancelLoc(){
+  stopWatch(); cur=null;
+  document.getElementById('name').value='';
+  document.getElementById('out').textContent='ยังไม่มีข้อมูล';
+  document.getElementById('btnSave').disabled=true;
+  msg('');
+}
+
+function delOne(i){ if(confirm('ลบรายการนี้?')){ const a=load(); a.splice(i,1); store(a);} }
+function delAll(){ if(confirm('ลบข้อมูลทั้งหมด?')) store([]); }
+
+function exportCSV(){
+  const a=load(); if(!a.length){alert('ไม่มีข้อมูล');return;}
+  let s='\uFEFFชื่อ,ละติจูด,ลองจิจูด,ความแม่นยำ(ม.),เวลา\n';
+  a.forEach(p=>s+=`"${p.name}",${p.lat},${p.lon},${p.acc.toFixed(1)},"${p.time}"\n`);
+  const u=URL.createObjectURL(new Blob([s],{type:'text/csv'}));
+  const l=document.createElement('a'); l.href=u; l.download='coordinates.csv'; l.click();
+}
+
+function msg(t){ document.getElementById('msg').textContent=t; }
+
+function render(){
+  const a=load(), tb=document.querySelector('#tbl tbody'); tb.innerHTML='';
+  document.getElementById('cnt').textContent=a.length;
+  a.forEach((p,i)=>{
+    const r=tb.insertRow();
+    r.innerHTML=`<td>${p.name}</td><td>${p.lat.toFixed(6)}</td><td>${p.lon.toFixed(6)}</td>
+      <td>${p.acc.toFixed(0)}</td><td>${p.time}</td>
+      <td><button class="b-del" style="padding:3px 8px;margin:0" onclick="delOne(${i})">ลบ</button></td>`;
+  });
+}
+render();
+</script>
+</body>
+</html>
